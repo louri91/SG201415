@@ -1,0 +1,653 @@
+<html>
+
+<head>
+<title>Tierra</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="webgl-utils.js"></script>
+
+<script id="per-fragment-lighting-fs" type="x-shader/x-fragment"> //Script para crear el Fragment Shader
+    precision mediump float;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vTransformedNormal;
+    varying vec4 vPosition;
+
+    uniform bool uUseColorMap;
+    uniform bool uUseSpecularMap;
+    uniform bool uUseLighting;
+
+    uniform vec3 uAmbientColor;
+
+    uniform vec3 uPointLightingLocation;
+    uniform vec3 uPointLightingSpecularColor;
+    uniform vec3 uPointLightingDiffuseColor;
+
+    uniform sampler2D uColorMapSampler;
+    uniform sampler2D uSpecularMapSampler;
+
+
+    void main(void) {
+        vec3 lightWeighting;
+        if (!uUseLighting) {
+            lightWeighting = vec3(1.0, 1.0, 1.0);
+        } else {
+            vec3 lightDirection = normalize(uPointLightingLocation - vPosition.xyz);
+            vec3 normal = normalize(vTransformedNormal);
+
+            float specularLightWeighting = 0.0;
+            float shininess = 32.0;
+            if (uUseSpecularMap) {
+                shininess = texture2D(uSpecularMapSampler, vec2(vTextureCoord.s, vTextureCoord.t)).r * 255.0;
+            }
+            if (shininess < 255.0) {
+                vec3 eyeDirection = normalize(-vPosition.xyz);
+                vec3 reflectionDirection = reflect(-lightDirection, normal);
+
+                specularLightWeighting = pow(max(dot(reflectionDirection, eyeDirection), 0.0), shininess);
+            }
+
+            float diffuseLightWeighting = max(dot(normal, lightDirection), 0.0);
+            lightWeighting = uAmbientColor
+                + uPointLightingSpecularColor * specularLightWeighting
+                + uPointLightingDiffuseColor * diffuseLightWeighting;
+        }
+
+        vec4 fragmentColor;
+        if (uUseColorMap) {
+            fragmentColor = texture2D(uColorMapSampler, vec2(vTextureCoord.s, vTextureCoord.t));
+        } else {
+            fragmentColor = vec4(1.0, 1.0, 1.0, 1.0);
+        }
+        gl_FragColor = vec4(fragmentColor.rgb * lightWeighting, fragmentColor.a);
+    }
+</script>
+
+<script id="per-fragment-lighting-vs" type="x-shader/x-vertex"> //script para crear el Vertex Shader
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+
+    uniform mat4 uMVMatrix; //Matriz para los movimientos
+    uniform mat4 uPMatrix; //Matriz para la proyeccion
+    uniform mat3 uNMatrix; //Matriz para las normales
+
+    varying vec2 vTextureCoord;
+    varying vec3 vTransformedNormal;
+    varying vec4 vPosition;
+
+
+    void main(void) {
+        vPosition = uMVMatrix * vec4(aVertexPosition, 1.0);
+        gl_Position = uPMatrix * vPosition;
+        vTextureCoord = aTextureCoord;
+        vTransformedNormal = uNMatrix * aVertexNormal;
+    }
+</script>
+
+<script type="text/javascript">
+
+    var gl;
+
+    //Funcion para iniciar la variable GL con el canvas creado en el main(), en nuestro caso webGLStart()
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+    //Funcion para la creacion y compilacion de los shaders que devuelve el shader
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+    //Variable del programa que guardara algunos datos de los shaders para usar mas adelante como las matrices, datos del vertex y del fragment shader
+    var shaderProgram;
+
+    //Funcion para la inicializacion de los shaders y del shaderprogram
+    function initShaders() {
+        var fragmentShader = getShader(gl, "per-fragment-lighting-fs");
+        var vertexShader = getShader(gl, "per-fragment-lighting-vs");
+
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+
+        gl.useProgram(shaderProgram);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+        shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+        gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+        shaderProgram.colorMapSamplerUniform = gl.getUniformLocation(shaderProgram, "uColorMapSampler");
+        shaderProgram.specularMapSamplerUniform = gl.getUniformLocation(shaderProgram, "uSpecularMapSampler");
+        shaderProgram.useColorMapUniform = gl.getUniformLocation(shaderProgram, "uUseColorMap");
+        shaderProgram.useSpecularMapUniform = gl.getUniformLocation(shaderProgram, "uUseSpecularMap");
+        shaderProgram.useLightingUniform = gl.getUniformLocation(shaderProgram, "uUseLighting");
+        shaderProgram.ambientColorUniform = gl.getUniformLocation(shaderProgram, "uAmbientColor");
+        shaderProgram.pointLightingLocationUniform = gl.getUniformLocation(shaderProgram, "uPointLightingLocation");
+        shaderProgram.pointLightingSpecularColorUniform = gl.getUniformLocation(shaderProgram, "uPointLightingSpecularColor");
+        shaderProgram.pointLightingDiffuseColorUniform = gl.getUniformLocation(shaderProgram, "uPointLightingDiffuseColor");
+    }
+
+    //funcion para cargar las texturas
+    function handleLoadedTexture(texture) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    //variables donde se tendran las texturas
+    var earthColorMapTexture;
+    var earthSpecularMapTexture;
+    var moonColorMapTexture;
+    var moonSpecularMapTexture;
+
+    //funcion para guardar las texturas de la tierra
+    function tierraTextures(t,e) {
+        earthColorMapTexture = gl.createTexture();
+        earthColorMapTexture.image = new Image();
+        earthColorMapTexture.image.onload = function () {
+            handleLoadedTexture(earthColorMapTexture)
+        }
+        earthColorMapTexture.image.src = t;
+
+        earthSpecularMapTexture = gl.createTexture();
+        earthSpecularMapTexture.image = new Image();
+        earthSpecularMapTexture.image.onload = function () {
+            handleLoadedTexture(earthSpecularMapTexture)
+        }
+        earthSpecularMapTexture.image.src = e;
+    }
+    
+    //funcion para guardar las texturas de la luna
+    function lunaTextures(t,e) {
+        moonColorMapTexture = gl.createTexture();
+        moonColorMapTexture.image = new Image();
+        moonColorMapTexture.image.onload = function () {
+            handleLoadedTexture(moonColorMapTexture)
+        }
+        moonColorMapTexture.image.src = t;
+
+        moonSpecularMapTexture = gl.createTexture();
+        moonSpecularMapTexture.image = new Image();
+        moonSpecularMapTexture.image.onload = function () {
+            handleLoadedTexture(moonSpecularMapTexture)
+        }
+        moonSpecularMapTexture.image.src = e;
+    }
+
+    //variables de laz matriz de movimiento, "pila" y matriz de proyeccion
+    var mvMatrix = mat4.create();
+    var mvMatrixStack = [];
+    var pMatrix = mat4.create();
+
+    //funcion para hacer push en la pila y guardar la matriz de movimiento
+    function mvPushMatrix() {
+        var copy = mat4.create();
+        mat4.set(mvMatrix, copy);
+        mvMatrixStack.push(copy);
+    }
+
+    //funcion para hacer pop y sacar de la pila la matriz de movimiento guardada
+    function mvPopMatrix() {
+        if (mvMatrixStack.length == 0) {
+            throw "Invalid popMatrix!";
+        }
+        mvMatrix = mvMatrixStack.pop();
+    }
+
+    //funcion para hacer las matrices de proyeccion y movimiento uniformes y que se mantengan los movimientos normales
+    //se mueve en el origen y luego se desplaza el objeto
+    function setMatrixUniforms() {
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+        var normalMatrix = mat3.create();
+        mat4.toInverseMat3(mvMatrix, normalMatrix);
+        mat3.transpose(normalMatrix);
+        gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+    }
+
+    //funcion para pasar de grados a radianes
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+
+    //variables de los vectores de las normales, coordenadas de textura, vertices y caras de la tierra y la luna
+    var earthVertexNormal;
+    var earthVertexTextureCoord;
+    var earthVertexPosition;
+    var earthVertexIndex;
+    var moonVertexNormal;
+    var moonVertexTextureCoord;
+    var moonVertexPosition;
+    var moonVertexIndex;
+    
+    //funcion para crear la tierra con una geometria esferica e inicializar y dar valores a los vectores de esta
+    function tierra(latitudeBands, longitudeBands, radius){
+        var vertexPositionData = [];
+        var normalData = [];
+        var textureCoordData = [];
+        
+        //Se crean los puntos de la geometria con el centro en el origen de coordenadas
+        for (var latNumber=0; latNumber <= latitudeBands; latNumber++) {
+            var theta = latNumber * Math.PI / latitudeBands;
+            var sinTheta = Math.sin(theta);
+            var cosTheta = Math.cos(theta);
+
+            for (var longNumber=0; longNumber <= longitudeBands; longNumber++) {
+                var phi = longNumber * 2 * Math.PI / longitudeBands;
+                var sinPhi = Math.sin(phi);
+                var cosPhi = Math.cos(phi);
+
+                var x = cosPhi * sinTheta;
+                var y = cosTheta;
+                var z = sinPhi * sinTheta;
+                //generacion de las coordenadas de textura
+                var u = 1 - (longNumber / longitudeBands);
+                var v = 1 - (latNumber / latitudeBands);
+
+                //las normales se guardan asi, porque se crean los puntos con radio 1, para ke esten normalizados
+                normalData.push(x);
+                normalData.push(y);
+                normalData.push(z);
+                textureCoordData.push(u);
+                textureCoordData.push(v);
+                //los vertices se guardan escalando el punto creado por el radio
+                vertexPositionData.push(radius * x);
+                vertexPositionData.push(radius * y);
+                vertexPositionData.push(radius * z);
+            }
+        }
+
+        var indexData = [];
+        
+        //Se crean las caras de la geometria (triangulos)
+        for (var latNumber=0; latNumber < latitudeBands; latNumber++) {
+            for (var longNumber=0; longNumber < longitudeBands; longNumber++) {
+                var first = (latNumber * (longitudeBands + 1)) + longNumber;
+                var second = first + longitudeBands + 1;
+                indexData.push(first);
+                indexData.push(second);
+                indexData.push(first + 1);
+
+                indexData.push(second);
+                indexData.push(second + 1);
+                indexData.push(first + 1);
+            }
+        }
+
+        //se inicializan los vectores de los datos de la tierra y se les asignan los datos generados en la geometria
+        earthVertexNormal = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexNormal);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normalData), gl.STATIC_DRAW);
+        earthVertexNormal.itemSize = 3;
+        earthVertexNormal.numItems = normalData.length / 3;
+
+        earthVertexTextureCoord = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexTextureCoord);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureCoordData), gl.STATIC_DRAW);
+        earthVertexTextureCoord.itemSize = 2;
+        earthVertexTextureCoord.numItems = textureCoordData.length / 2;
+
+        earthVertexPosition = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexPosition);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexPositionData), gl.STATIC_DRAW);
+        earthVertexPosition.itemSize = 3;
+        earthVertexPosition.numItems = vertexPositionData.length / 3;
+
+        earthVertexIndex = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, earthVertexIndex);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), gl.STREAM_DRAW);
+        earthVertexIndex.itemSize = 1;
+        earthVertexIndex.numItems = indexData.length;
+    }
+
+    //funcion para crear la luna con una geometria esferica e inicializar y dar valores a los vectores de esta
+    function luna(latitudeBands, longitudeBands, radius) {
+        var vertexPositionData = [];
+        var normalData = [];
+        var textureCoordData = [];
+        
+        //Se crean los puntos de la geometria con el centro en el origen de coordenadas
+        for (var latNumber=0; latNumber <= latitudeBands; latNumber++) {
+            var theta = latNumber * Math.PI / latitudeBands;
+            var sinTheta = Math.sin(theta);
+            var cosTheta = Math.cos(theta);
+
+            for (var longNumber=0; longNumber <= longitudeBands; longNumber++) {
+                var phi = longNumber * 2 * Math.PI / longitudeBands;
+                var sinPhi = Math.sin(phi);
+                var cosPhi = Math.cos(phi);
+
+                var x = cosPhi * sinTheta;
+                var y = cosTheta;
+                var z = sinPhi * sinTheta;
+                //generacion de las coordenadas de textura
+                var u = 1 - (longNumber / longitudeBands);
+                var v = 1 - (latNumber / latitudeBands);
+
+                //las normales se guardan asi, porque se crean los puntos con radio 1, para ke esten normalizados
+                normalData.push(x);
+                normalData.push(y);
+                normalData.push(z);
+                textureCoordData.push(u);
+                textureCoordData.push(v);
+                //los vertices se guardan escalando el punto creado por el radio
+                vertexPositionData.push(radius * x);
+                vertexPositionData.push(radius * y);
+                vertexPositionData.push(radius * z);
+            }
+        }
+
+        var indexData = [];
+        
+        //Se crean las caras de la geometria (triangulos)
+        for (var latNumber=0; latNumber < latitudeBands; latNumber++) {
+            for (var longNumber=0; longNumber < longitudeBands; longNumber++) {
+                var first = (latNumber * (longitudeBands + 1)) + longNumber;
+                var second = first + longitudeBands + 1;
+                indexData.push(first);
+                indexData.push(second);
+                indexData.push(first + 1);
+
+                indexData.push(second);
+                indexData.push(second + 1);
+                indexData.push(first + 1);
+            }
+        }
+
+        //se inicializan los vectores de los datos de la luna y se les asignan los datos generados en la geometria
+        moonVertexNormal = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexNormal);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normalData), gl.STATIC_DRAW);
+        moonVertexNormal.itemSize = 3;
+        moonVertexNormal.numItems = normalData.length / 3;
+
+        moonVertexTextureCoord = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexTextureCoord);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureCoordData), gl.STATIC_DRAW);
+        moonVertexTextureCoord.itemSize = 2;
+        moonVertexTextureCoord.numItems = textureCoordData.length / 2;
+
+        moonVertexPosition = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexPosition);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexPositionData), gl.STATIC_DRAW);
+        moonVertexPosition.itemSize = 3;
+        moonVertexPosition.numItems = vertexPositionData.length / 3;
+
+        moonVertexIndex = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, moonVertexIndex);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), gl.STREAM_DRAW);
+        moonVertexIndex.itemSize = 1;
+        moonVertexIndex.numItems = indexData.length;
+    }
+
+    //angulos base para las rotaciones de la tierra y la luna
+    var earthAngle = 100;
+    var moonAngle = 0; //0 para que la luna no rote sobre si misma
+    var earthMoonAngle = 100;
+    //booleano para gestionar el click del raton y que se pare el movimiento y se reanude
+    var drag=true;
+    
+    //funcion para que cambie de valor el booleano al valor opuesto
+    function mouseDown(e) {
+        if(!drag)
+            drag=true;
+        else
+            drag=false;
+        
+        e.preventDefault();
+        return false;
+    }
+
+    //funcion para dibujar la escena
+    function drawScene() {
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+        //para activar la textura en modo color
+        var useColorMap = true;
+        gl.uniform1i(shaderProgram.useColorMapUniform, useColorMap);
+        //para activar la textura en modo especular
+        var useSpecularMap = true;
+        gl.uniform1i(shaderProgram.useSpecularMapUniform, useSpecularMap);
+        //activacion y creacion de la fuente de luz que iluminará la escena
+        var lighting = true;
+        gl.uniform1i(shaderProgram.useLightingUniform, lighting);
+        if (lighting) {
+            gl.uniform3f(
+                shaderProgram.ambientColorUniform, //reaccion de los objetos a la luz, componente ambiente
+                parseFloat(0.5),
+                parseFloat(0.5),
+                parseFloat(0.5)
+            );
+
+            gl.uniform3f(
+                shaderProgram.pointLightingLocationUniform, //localizacion del punto de luz
+                parseFloat(-10.0),
+                parseFloat(4.0),
+                parseFloat(-20.0)
+            );
+
+            gl.uniform3f(
+                shaderProgram.pointLightingSpecularColorUniform, //reaccion de los objetos a la luz, componente especular
+                parseFloat(1.0),
+                parseFloat(1.0),
+                parseFloat(1.0)
+            );
+
+            gl.uniform3f(
+                shaderProgram.pointLightingDiffuseColorUniform, //reaccion de los objetos a la luz, componente difusa
+                parseFloat(0.4),
+                parseFloat(0.4),
+                parseFloat(0.4)
+            );
+        }
+
+        //se hace identidad la matriz de movimiento para que el primer objeto este cetrado en el origen
+        mat4.identity(mvMatrix);
+
+        //se traslada el primer objeto hacia atras, para poder ver mejor la escena y como se usa el push y el pop, este punto sera el origen para el siguiente objeto
+        mat4.translate(mvMatrix, [0, 0, -50]);
+        //se escala el primer objeto en relacion del tamaño de la ventana, y pasa lo mismo que la traslacion anterior, como se hace antes del primer push y pop, este escalado afecta a todos los objetos de la escena
+        mat4.scale(mvMatrix,[0.5,(0.5*gl.viewportWidth)/(gl.viewportHeight),0.5]);
+        
+        //se guarda la matriz de movimiento en la pila, para que lo que se haga ahora solo afecte al objeto de ahora y para poder dibujar varios objetos en la misma escena
+        //primer objeto, la tierra
+        mvPushMatrix();   
+            mat4.rotate(mvMatrix, degToRad(23.4), [1, 0, -1]); // inclinación
+            mat4.rotate(mvMatrix, degToRad(earthAngle), [0, 1, 0]) //rotacion de la tierra sobre si misma
+            
+            //se activa en la tierra la textura 0 o base
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, earthColorMapTexture);
+            gl.uniform1i(shaderProgram.colorMapSamplerUniform, 0);
+        
+            //se activa en la tierra la textura 1 o segunda textura a combinar con la textura base
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, earthSpecularMapTexture);
+            gl.uniform1i(shaderProgram.specularMapSamplerUniform, 1);
+        
+            //se hacen uniformes todas las matrices para que los movimientos y objetos se hagan en el origen y se trasladen a su sitio correspondiente 
+            setMatrixUniforms();
+            
+            //se dibujan los puntos de la esfera de la tierra
+            gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexPosition);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, earthVertexPosition.itemSize, gl.FLOAT, false, 0, 0);
+
+            //se dibujan las coordenadas de textura sobre estos puntos
+            gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexTextureCoord);
+            gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, earthVertexTextureCoord.itemSize, gl.FLOAT, false, 0, 0);
+
+            //se dibujan las normales para los efectos de la luz
+            gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexNormal);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, earthVertexNormal.itemSize, gl.FLOAT, false, 0, 0);
+
+            //se dibujan los triangulos de la tierra
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, earthVertexIndex);
+            gl.drawElements(gl.TRIANGLES, earthVertexIndex.numItems, gl.UNSIGNED_SHORT, 0);
+            //con todo esto queda dibujada la tierra con sus texturas y reacciones a la luz
+            //se recupera la matriz de moviento para poder dibujar otro objeto y movimientos sobre este nuevo objeto
+        mvPopMatrix();
+        
+        //rotacion del segundo objeto sobre el primero, en este caso, la luna sobre la tierra
+        mat4.rotate(mvMatrix, degToRad(earthMoonAngle), [0, 1, 0]);
+    
+        //traslacion del segundo objeto, la luna 
+        mat4.translate(mvMatrix, [20, 5, 0]);
+        
+        //se guarda la matriz de movimiento en la pila
+        //Segundo objeto, la luna
+        mvPushMatrix();
+            mat4.rotate(mvMatrix, degToRad(7.4), [1, 0, -1]); // inclinación de la luna
+            mat4.rotate(mvMatrix, degToRad(moonAngle/2), [0, 1, 0]);//rotacion de la luna
+
+            //se activa en la tierra la textura 0 o base
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, moonColorMapTexture);
+            gl.uniform1i(shaderProgram.colorMapSamplerUniform, 0);
+
+            //se activa en la tierra la textura 1 o segunda textura a combinar con la textura base
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, moonSpecularMapTexture);
+            gl.uniform1i(shaderProgram.specularMapSamplerUniform, 1);
+        
+            //se hacen uniformes todas las matrices para que los movimientos y objetos se hagan en el origen y se trasladen a su sitio correspondiente
+            setMatrixUniforms();
+
+            //se dibujan los puntos de la esfera de la luna
+            gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexPosition);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, moonVertexPosition.itemSize, gl.FLOAT, false, 0, 0);
+
+            //se dibujan las coordenadas de textura sobre estos puntos
+            gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexTextureCoord);
+            gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, moonVertexTextureCoord.itemSize, gl.FLOAT, false, 0, 0);
+
+            //se dibujan las normales para los efectos de la luz
+            gl.bindBuffer(gl.ARRAY_BUFFER, moonVertexNormal);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, moonVertexNormal.itemSize, gl.FLOAT, false, 0, 0);
+
+            //se dibujan los triangulos de la tierra
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, moonVertexIndex);
+            gl.drawElements(gl.TRIANGLES, moonVertexIndex.numItems, gl.UNSIGNED_SHORT, 0);
+            //con todo esto queda dibujada la tierra con sus texturas y reacciones a la luz
+            //se recupera la matriz de moviento para poder dibujar otro objeto y movimientos sobre este nuevo objeto
+        mvPopMatrix();
+    }
+
+    //variable para controlar el paso del tiempo y poder dar movimiento a la escena
+    var lastTime = 0;
+
+    //funcion para controlar los movimientos, incrementos de los angulos de las rotaciones
+    function animate() {
+        var timeNow = new Date().getTime();
+        if (lastTime != 0) {
+            var elapsed = timeNow - lastTime;
+
+            earthAngle += 0.21 * elapsed;
+            
+            if(moonAngle != 0)
+                moonAngle += 0.03 * elapsed;
+            
+            if(drag)
+                earthMoonAngle += 0.03 * elapsed;
+            
+        }
+        lastTime = timeNow;
+    }
+
+    //funcion fachada para hacer la animacion completa, de dibujado de la escena y la variacion continua de los movimientos
+    function tick() {
+        requestAnimFrame(tick);
+        drawScene();
+        animate();
+    }
+
+    //funcion principal, es nuestro main ()
+    function webGLStart() {
+        var canvas = document.getElementById("Tierra"); //se crea el canvas a usar durante nuestro programa en WebGL
+        canvas.width = window.innerWidth; //se redimensiona el canvas para que ocupe el ancho de la ventana
+        canvas.height = window.innerHeight; //se redimensiona el canvas para que ocupe el alto de la ventana
+        canvas.addEventListener("mousedown", mouseDown, false); //se le dice al canvas que use nuestra funcion de gestion de los movimientos del raton
+        initGL(canvas); //se inicializa la variable gl
+        initShaders(); //se inicializan los shaders
+        tierra(64,64,15); //se crea la tierra con geometria esferica y todos sus vectores
+        tierraTextures("earth.jpg", "earth-specular.gif"); //se crean las texturas de la tierra
+        luna(64,64,3); //se crea la luna con geometria esferica y todos sus vectores
+        lunaTextures("moon.jpg", "moon-specular.gif"); //se crean las texturas de la luna
+
+        tick(); //se llama a la funcion de gestion de dibujar y animar la escena
+    }
+
+</script>
+
+</head>
+
+<body onload="webGLStart();">
+
+    <canvas id="Tierra" style="border: none;" width="600" height="600"></canvas><br />
+    
+</body>
+
+</html>

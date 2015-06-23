@@ -1,0 +1,11 @@
+Se ven, pero mal:
+Dragon1 (en gris)
+spyro (transparente)
+KinjaDragern (no carga la silla en rojo, la carga en gris)
+
+Fallan:
+Ghoul
+ALDUIN
+D-7
+Dragon
+Dragon-obj

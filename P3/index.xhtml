@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+    <link rel='stylesheet' type='text/css' href='http://www.x3dom.org/x3dom/release/x3dom.css'></link>
+    <script type='text/javascript' src='http://www.x3dom.org/download/dev/x3dom-full.js'></script>
+
+    <title>Sistema Solar X3D</title>
+    
+    <style>
+        *{
+            font-family: Verdana;
+        }
+        
+        html {
+            margin:0;padding:0;
+        }
+        
+        body {
+            font-size:110%;
+            margin: 0px;
+        }
+
+        #EmbeddedX3dScene {
+            margin: 0px;
+            width: 99.75%;
+            height: 99.5%;
+            border: none;
+            display: block;
+            position:relative;
+            background: #000000;
+        }  
+    </style>
+    <script type="text/javascript"> 
+        var estadoPlanetas = new Array(false,false,false,false,false,false,false,false);
+        var planetas = new Array("intervaloTrasMercurio",
+                                 "intervaloTrasVenus",
+                                 "intervaloTrasTierra",
+                                 "intervaloTrasMarte",
+                                 "intervaloTrasJupiter",
+                                 "intervaloTrasSaturno",
+                                 "intervaloTrasUrano",
+                                 "intervaloTrasNeptuno");
+        
+        function pararReanudarAnimacion(id) {
+            indice = planetas.indexOf(id);
+            planetaParado = estadoPlanetas[indice];
+            
+            ts = document.getElementById('sistemaSolar__'+id);
+            ts=ts._x3domNode;
+
+            ts._vf.enabled=planetaParado;
+            
+            estadoPlanetas[indice] = !estadoPlanetas[indice];
+        }
+    </script>
+</head>
+<body id="body">        
+        <X3D  profile='Full'
+              id="EmbeddedX3dScene" showlog="false" showstat="false">
+            <Scene>
+                <Inline nameSpaceName='sistemaSolar' url='"./sistemaSolar.x3d"'/>
+            </Scene>
+        </X3D>
+</body>
+</html>
